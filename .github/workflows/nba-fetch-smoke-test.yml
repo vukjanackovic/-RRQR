@@ -38,6 +38,8 @@ jobs:
           fi
 
       - name: Standings (ca.global.nba.com)
+        id: standings
+        continue-on-error: true
         run: |
           set -euo pipefail
           UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
@@ -55,10 +57,29 @@ jobs:
           echo "First 500 chars (for debugging):"
           head -c 500 /tmp/standing.json; echo
           if [ "$code" != "200" ]; then
-            echo "::error::Standings fetch failed (HTTP $code). Global endpoints often block datacenter IPs; schedule on cdn.nba.com may still work for the bridge."
+            echo "::warning::Standings returned HTTP $code (global host often blocks cloud/datacenter IPs)."
             exit 1
           fi
           if [ "$bytes" -lt 50 ]; then
-            echo "::error::Body too small"
+            echo "::warning::Standings body too small"
             exit 1
           fi
+
+      - name: Summary
+        run: |
+          if [ "${{ steps.standings.outcome }}" = "success" ]; then
+            echo "Schedule: OK | Standings: OK"
+          else
+            echo "::notice::Schedule probe ran above. Standings failed from this runner — mirror standings from home/VPS or skip theme bridge for that URL; RRQR schedule/boxscore still use cdn.nba.com."
+          fi
+
+      - name: Upload JSON as artifacts (download from run Summary)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nba-smoke-json-run-${{ github.run_number }}
+          path: |
+            /tmp/schedule.json
+            /tmp/standing.json
+          if-no-files-found: warn
+          retention-days: 7
