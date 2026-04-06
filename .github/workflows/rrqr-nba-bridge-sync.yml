@@ -1,0 +1,49 @@
+# Requires repo secrets: RRQR_BRIDGE_SITE, RRQR_BRIDGE_SECRET
+# Optional: RRQR_BRIDGE_GAME_ID (10-digit NBA game id)
+
+name: RRQR NBA bridge sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '20 */2 * * *'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: curl
+
+      - name: Fetch NBA JSON and ingest into WordPress
+        env:
+          RRQR_BRIDGE_SITE: ${{ secrets.RRQR_BRIDGE_SITE }}
+          RRQR_BRIDGE_SECRET: ${{ secrets.RRQR_BRIDGE_SECRET }}
+          RRQR_BRIDGE_GAME_ID: ${{ secrets.RRQR_BRIDGE_GAME_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RRQR_BRIDGE_SITE:-}" ] || [ -z "${RRQR_BRIDGE_SECRET:-}" ]; then
+            echo "Missing secrets: RRQR_BRIDGE_SITE and/or RRQR_BRIDGE_SECRET"
+            exit 1
+          fi
+          if [ -f wp-content/plugins/rrqr/tools/rrqr-bridge-fetch.php ]; then
+            SCRIPT="wp-content/plugins/rrqr/tools/rrqr-bridge-fetch.php"
+          elif [ -f tools/rrqr-bridge-fetch.php ]; then
+            SCRIPT="tools/rrqr-bridge-fetch.php"
+          else
+            echo "Cannot find rrqr-bridge-fetch.php"
+            exit 1
+          fi
+          ARGS=()
+          if [ -n "${RRQR_BRIDGE_GAME_ID:-}" ]; then
+            ARGS+=(--game="$RRQR_BRIDGE_GAME_ID")
+          fi
+          php "$SCRIPT" "${ARGS[@]}"
