@@ -1,0 +1,55 @@
+# Only checks whether GitHub Actions runners can download NBA JSON.
+# No WordPress, no secrets. Use "Run workflow" to test.
+
+name: NBA fetch smoke test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Schedule (cdn.nba.com)
+        run: |
+          set -euo pipefail
+          UA='Mozilla/5.0 (compatible; RRQR-SmokeTest/1.0)'
+          URL='https://cdn.nba.com/static/json/staticData/scheduleLeagueV2.json'
+          code=$(curl -sS -o /tmp/schedule.json -w '%{http_code}' -A "$UA" "$URL")
+          bytes=$(wc -c </tmp/schedule.json | tr -d ' ')
+          echo "URL: $URL"
+          echo "HTTP status: $code"
+          echo "Bytes downloaded: $bytes"
+          echo "First 200 chars:"
+          head -c 200 /tmp/schedule.json; echo
+          if [ "$code" != "200" ]; then
+            echo "::error::Schedule fetch failed (expected HTTP 200)"
+            exit 1
+          fi
+          if [ "$bytes" -lt 1000 ]; then
+            echo "::error::Body too small; likely not valid schedule JSON"
+            exit 1
+          fi
+
+      - name: Standings (ca.global.nba.com)
+        run: |
+          set -euo pipefail
+          UA='Mozilla/5.0 (compatible; RRQR-SmokeTest/1.0)'
+          URL='https://ca.global.nba.com/stats2/team/standing.json?locale=en&teamCode=raptors'
+          code=$(curl -sS -o /tmp/standing.json -w '%{http_code}' -A "$UA" "$URL")
+          bytes=$(wc -c </tmp/standing.json | tr -d ' ')
+          echo "URL: $URL"
+          echo "HTTP status: $code"
+          echo "Bytes downloaded: $bytes"
+          echo "First 200 chars:"
+          head -c 200 /tmp/standing.json; echo
+          if [ "$code" != "200" ]; then
+            echo "::error::Standings fetch failed (expected HTTP 200)"
+            exit 1
+          fi
+          if [ "$bytes" -lt 50 ]; then
+            echo "::error::Body too small"
+            exit 1
+          fi
