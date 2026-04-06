@@ -1,5 +1,7 @@
 # Only checks whether GitHub Actions runners can download NBA JSON.
 # No WordPress, no secrets. Use "Run workflow" to test.
+# Files are written under ./nba-smoke-out/ so upload-artifact can attach them
+# (GitHub does not reliably upload paths under /tmp).
 
 name: NBA fetch smoke test
 
@@ -12,22 +14,28 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Schedule (cdn.nba.com)
         run: |
           set -euo pipefail
+          mkdir -p nba-smoke-out
+          OUT="${GITHUB_WORKSPACE}/nba-smoke-out/schedule.json"
           UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
           URL='https://cdn.nba.com/static/json/staticData/scheduleLeagueV2.json'
-          code=$(curl -sSL --compressed -o /tmp/schedule.json -w '%{http_code}' \
+          code=$(curl -sSL --compressed -o "$OUT" -w '%{http_code}' \
             -A "$UA" \
             -H 'Accept: application/json,text/plain,*/*' \
             -e 'https://www.nba.com/' \
             "$URL")
-          bytes=$(wc -c </tmp/schedule.json | tr -d ' ')
+          bytes=$(wc -c <"$OUT" | tr -d ' ')
           echo "URL: $URL"
           echo "HTTP status: $code"
           echo "Bytes downloaded: $bytes"
+          echo "Saved to: $OUT"
           echo "First 200 chars:"
-          head -c 200 /tmp/schedule.json; echo
+          head -c 200 "$OUT"; echo
           if [ "$code" != "200" ]; then
             echo "::error::Schedule fetch failed (expected HTTP 200, got $code)"
             exit 1
@@ -36,26 +44,30 @@ jobs:
             echo "::error::Body too small; likely not valid schedule JSON"
             exit 1
           fi
+          python3 -c "import pathlib; b=pathlib.Path('$OUT').read_bytes().lstrip(); assert b[:1]==b'{', 'not a JSON object'; print('Schedule: confirmed JSON object prefix')"
 
       - name: Standings (ca.global.nba.com)
         id: standings
         continue-on-error: true
         run: |
           set -euo pipefail
+          mkdir -p nba-smoke-out
+          OUT="${GITHUB_WORKSPACE}/nba-smoke-out/standing.json"
           UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
           URL='https://ca.global.nba.com/stats2/team/standing.json?locale=en&teamCode=raptors'
-          code=$(curl -sSL --compressed -o /tmp/standing.json -w '%{http_code}' \
+          code=$(curl -sSL --compressed -o "$OUT" -w '%{http_code}' \
             -A "$UA" \
             -H 'Accept: application/json,text/plain,*/*' \
             -e 'https://ca.global.nba.com/' \
             -H 'Origin: https://ca.global.nba.com' \
             "$URL")
-          bytes=$(wc -c </tmp/standing.json | tr -d ' ')
+          bytes=$(wc -c <"$OUT" | tr -d ' ')
           echo "URL: $URL"
           echo "HTTP status: $code"
           echo "Bytes downloaded: $bytes"
+          echo "Saved to: $OUT"
           echo "First 500 chars (for debugging):"
-          head -c 500 /tmp/standing.json; echo
+          head -c 500 "$OUT"; echo
           if [ "$code" != "200" ]; then
             echo "::warning::Standings returned HTTP $code (global host often blocks cloud/datacenter IPs)."
             exit 1
@@ -64,6 +76,11 @@ jobs:
             echo "::warning::Standings body too small"
             exit 1
           fi
+          if ! python3 -c "import pathlib; b=pathlib.Path('$OUT').read_bytes().lstrip(); raise SystemExit(0 if b[:1]==b'{' else 1)"; then
+            echo "::warning::Standings: HTTP 200 but body is NOT JSON (usually HTML from the NBA.com app). Legacy standing.json no longer returns API JSON to automated clients."
+            exit 1
+          fi
+          echo "Standings: confirmed JSON object prefix"
 
       - name: Summary
         run: |
@@ -73,13 +90,11 @@ jobs:
             echo "::notice::Schedule probe ran above. Standings failed from this runner — mirror standings from home/VPS or skip theme bridge for that URL; RRQR schedule/boxscore still use cdn.nba.com."
           fi
 
-      - name: Upload JSON as artifacts (download from run Summary)
+      - name: Upload JSON as artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: nba-smoke-json-run-${{ github.run_number }}
-          path: |
-            /tmp/schedule.json
-            /tmp/standing.json
+          path: nba-smoke-out/
           if-no-files-found: warn
           retention-days: 7
