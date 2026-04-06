@@ -61,7 +61,7 @@ if ( is_string( $game ) && preg_match( '/^\d{10}$/', $game ) ) {
 	exit( 1 );
 }
 
-$ua = 'RRQR-Bridge-Fetch/1.0';
+$ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 foreach ( $jobs as $job ) {
 	$body = rrqr_bridge_cli_http_get( $job['url'], $ua );
@@ -92,11 +92,32 @@ foreach ( $jobs as $job ) {
 }
 
 /**
+ * Browser-like headers; global.nba.com often rejects bare clients / datacenter IPs.
+ *
+ * @param string $url URL.
+ * @return string[] Header lines without trailing CRLF.
+ */
+function rrqr_bridge_request_headers_for_url( $url ) {
+	$h = array(
+		'Accept: application/json,text/plain,*/*',
+	);
+	if ( false !== strpos( $url, 'global.nba.com' ) ) {
+		$h[] = 'Referer: https://ca.global.nba.com/';
+		$h[] = 'Origin: https://ca.global.nba.com';
+	} else {
+		$h[] = 'Referer: https://www.nba.com/';
+	}
+	return $h;
+}
+
+/**
  * @param string $url URL.
  * @param string $ua  User-Agent.
  * @return string|null
  */
 function rrqr_bridge_cli_http_get( $url, $ua ) {
+	$extra_headers = rrqr_bridge_request_headers_for_url( $url );
+
 	if ( function_exists( 'curl_init' ) ) {
 		$ch = curl_init( $url );
 		curl_setopt_array(
@@ -105,7 +126,9 @@ function rrqr_bridge_cli_http_get( $url, $ua ) {
 				CURLOPT_RETURNTRANSFER => true,
 				CURLOPT_FOLLOWLOCATION => true,
 				CURLOPT_TIMEOUT        => 60,
+				CURLOPT_ENCODING       => '',
 				CURLOPT_USERAGENT      => $ua,
+				CURLOPT_HTTPHEADER     => $extra_headers,
 			)
 		);
 		$res  = curl_exec( $ch );
@@ -117,11 +140,15 @@ function rrqr_bridge_cli_http_get( $url, $ua ) {
 		return $res;
 	}
 
+	$hdr = "User-Agent: {$ua}\r\n";
+	foreach ( $extra_headers as $line ) {
+		$hdr .= $line . "\r\n";
+	}
 	$ctx = stream_context_create(
 		array(
 			'http' => array(
 				'timeout' => 60,
-				'header'  => "User-Agent: {$ua}\r\n",
+				'header'  => $hdr,
 			),
 		)
 	);
