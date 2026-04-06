@@ -15,9 +15,13 @@ jobs:
       - name: Schedule (cdn.nba.com)
         run: |
           set -euo pipefail
-          UA='Mozilla/5.0 (compatible; RRQR-SmokeTest/1.0)'
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
           URL='https://cdn.nba.com/static/json/staticData/scheduleLeagueV2.json'
-          code=$(curl -sS -o /tmp/schedule.json -w '%{http_code}' -A "$UA" "$URL")
+          code=$(curl -sSL --compressed -o /tmp/schedule.json -w '%{http_code}' \
+            -A "$UA" \
+            -H 'Accept: application/json,text/plain,*/*' \
+            -e 'https://www.nba.com/' \
+            "$URL")
           bytes=$(wc -c </tmp/schedule.json | tr -d ' ')
           echo "URL: $URL"
           echo "HTTP status: $code"
@@ -25,7 +29,7 @@ jobs:
           echo "First 200 chars:"
           head -c 200 /tmp/schedule.json; echo
           if [ "$code" != "200" ]; then
-            echo "::error::Schedule fetch failed (expected HTTP 200)"
+            echo "::error::Schedule fetch failed (expected HTTP 200, got $code)"
             exit 1
           fi
           if [ "$bytes" -lt 1000 ]; then
@@ -36,17 +40,22 @@ jobs:
       - name: Standings (ca.global.nba.com)
         run: |
           set -euo pipefail
-          UA='Mozilla/5.0 (compatible; RRQR-SmokeTest/1.0)'
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
           URL='https://ca.global.nba.com/stats2/team/standing.json?locale=en&teamCode=raptors'
-          code=$(curl -sS -o /tmp/standing.json -w '%{http_code}' -A "$UA" "$URL")
+          code=$(curl -sSL --compressed -o /tmp/standing.json -w '%{http_code}' \
+            -A "$UA" \
+            -H 'Accept: application/json,text/plain,*/*' \
+            -e 'https://ca.global.nba.com/' \
+            -H 'Origin: https://ca.global.nba.com' \
+            "$URL")
           bytes=$(wc -c </tmp/standing.json | tr -d ' ')
           echo "URL: $URL"
           echo "HTTP status: $code"
           echo "Bytes downloaded: $bytes"
-          echo "First 200 chars:"
-          head -c 200 /tmp/standing.json; echo
+          echo "First 500 chars (for debugging):"
+          head -c 500 /tmp/standing.json; echo
           if [ "$code" != "200" ]; then
-            echo "::error::Standings fetch failed (expected HTTP 200)"
+            echo "::error::Standings fetch failed (HTTP $code). Global endpoints often block datacenter IPs; schedule on cdn.nba.com may still work for the bridge."
             exit 1
           fi
           if [ "$bytes" -lt 50 ]; then
