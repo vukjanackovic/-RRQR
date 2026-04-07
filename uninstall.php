@@ -17,6 +17,10 @@ delete_option( 'rrqr_coach_headshot_url' );
 delete_option( 'rrqr_bridge_enabled' );
 delete_option( 'rrqr_bridge_admin_only' );
 delete_option( 'rrqr_bridge_secret' );
+delete_option( 'rrqr_github_token' );
+delete_option( 'rrqr_github_repo' );
+delete_option( 'rrqr_github_workflow' );
+delete_option( 'rrqr_github_ref' );
 
 // Remove cached data.
 delete_transient( 'rrqr_nba_schedule' );

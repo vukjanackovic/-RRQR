@@ -19,6 +19,11 @@ Copy this folder to `wp-content/plugins/rrqr/` and activate **RR Quick Reaction*
 2. **Quick Reactions → Bridge tools**: inspect cache files or try **Download schedule + standings** (only works if *this* server can reach the NBA CDN).
 3. **External fetch**: run `tools/rrqr-bridge-fetch.php` from a network that *can* reach the NBA, or use **GitHub Actions** (see below).
 
+### Schedule vs legacy “standings” URL
+
+- **`cdn.nba.com/.../scheduleLeagueV2.json`** — real JSON; safe for server/GitHub Actions.
+- **`ca.global.nba.com/.../standing.json`** — often returns **HTTP 200 with an HTML app shell**, not JSON, for automated clients. Your smoke test should flag this. The fetcher **skips** ingesting that response so you do not poison the cache. The child theme’s `summary()` block still expects the old JSON shape; until you switch that widget to another source (e.g. `stats.nba.com` API + mapping, or manual text), standings may not update via the bridge.
+
 ## GitHub Actions sync
 
 Repository secret | Purpose

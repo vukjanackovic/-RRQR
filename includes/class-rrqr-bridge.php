@@ -371,6 +371,29 @@ class RRQR_Bridge {
 	}
 
 	/**
+	 * Whether the mirrored boxscore JSON file exists for a game.
+	 *
+	 * @param string $game_id Ten-digit NBA game id.
+	 * @return bool
+	 */
+	public static function has_boxscore_mirror_file( $game_id ) {
+		if ( ! preg_match( '/^\d{10}$/', (string) $game_id ) ) {
+			return false;
+		}
+		$dir = self::get_cache_dir();
+		if ( is_wp_error( $dir ) ) {
+			return false;
+		}
+		$rel  = 'cdn/static/json/liveData/boxscore/boxscore_' . $game_id . '.json';
+		$full = $dir . '/' . $rel;
+		if ( ! is_readable( $full ) ) {
+			return false;
+		}
+		$size = (int) filesize( $full );
+		return $size > 50;
+	}
+
+	/**
 	 * Public ingest URL for admins / fetcher script.
 	 *
 	 * @return string

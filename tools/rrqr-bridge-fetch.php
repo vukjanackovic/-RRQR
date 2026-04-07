@@ -11,6 +11,10 @@
  *
  *   php rrqr-bridge-fetch.php --game=0022400123
  *
+ * Boxscore only (skip schedule + standings ingest — use when full sync fails on schedule):
+ *
+ *   php rrqr-bridge-fetch.php --game=0022400123 --boxscore-only
+ *
  * @package RRQR
  */
 
@@ -18,47 +22,66 @@ if ( php_sapi_name() !== 'cli' ) {
 	exit( 1 );
 }
 
-$longopts = array( 'site:', 'secret:', 'game:', 'help' );
+$longopts = array( 'site:', 'secret:', 'game:', 'boxscore-only', 'help' );
 $opts     = getopt( '', $longopts );
 
 if ( isset( $opts['help'] ) ) {
 	$self = basename( __FILE__ );
-	echo "Usage: RRQR_BRIDGE_SITE=https://site RRQR_BRIDGE_SECRET=xxx php {$self} [--game=GAME_ID]\n";
-	echo "   or: php {$self} --site=https://site --secret=xxx [--game=GAME_ID]\n";
+	echo "Usage: RRQR_BRIDGE_SITE=https://site RRQR_BRIDGE_SECRET=xxx php {$self} [--game=GAME_ID] [--boxscore-only]\n";
+	echo "   or: php {$self} --site=https://site --secret=xxx [--game=GAME_ID] [--boxscore-only]\n";
+	echo "\n";
+	echo "  --boxscore-only  Ingest only boxscore JSON for --game (requires --game). Skips schedule + standings.\n";
 	exit( 0 );
 }
 
 $site   = $opts['site'] ?? getenv( 'RRQR_BRIDGE_SITE' );
 $secret = $opts['secret'] ?? getenv( 'RRQR_BRIDGE_SECRET' );
 $game   = $opts['game'] ?? null;
+$boxscore_only = array_key_exists( 'boxscore-only', $opts );
 
 if ( empty( $site ) || empty( $secret ) ) {
 	fwrite( STDERR, "Missing --site / RRQR_BRIDGE_SITE or --secret / RRQR_BRIDGE_SECRET.\n" );
 	exit( 1 );
 }
 
+if ( $boxscore_only ) {
+	if ( ! is_string( $game ) || ! preg_match( '/^\d{10}$/', $game ) ) {
+		fwrite( STDERR, "--boxscore-only requires a valid --game=XXXXXXXXXX (10-digit NBA game id).\n" );
+		exit( 1 );
+	}
+}
+
 $site = rtrim( $site, '/' );
 $endpoint = $site . '/wp-json/rrqr/v1/bridge';
 
-$jobs = array(
-	array(
-		'url'  => 'https://cdn.nba.com/static/json/staticData/scheduleLeagueV2.json',
-		'path' => 'cdn/static/json/staticData/scheduleLeagueV2.json',
-	),
-	array(
-		'url'  => 'https://ca.global.nba.com/stats2/team/standing.json?locale=en&teamCode=raptors',
-		'path' => 'global/stats2/team/standing.json',
-	),
-);
-
-if ( is_string( $game ) && preg_match( '/^\d{10}$/', $game ) ) {
-	$jobs[] = array(
-		'url'  => 'https://cdn.nba.com/static/json/liveData/boxscore/boxscore_' . $game . '.json',
-		'path' => 'cdn/static/json/liveData/boxscore/boxscore_' . $game . '.json',
+if ( $boxscore_only ) {
+	$jobs = array(
+		array(
+			'url'  => 'https://cdn.nba.com/static/json/liveData/boxscore/boxscore_' . $game . '.json',
+			'path' => 'cdn/static/json/liveData/boxscore/boxscore_' . $game . '.json',
+		),
 	);
-} elseif ( null !== $game && '' !== $game ) {
-	fwrite( STDERR, "Invalid --game: expected 10-digit NBA game id.\n" );
-	exit( 1 );
+} else {
+	$jobs = array(
+		array(
+			'url'  => 'https://cdn.nba.com/static/json/staticData/scheduleLeagueV2.json',
+			'path' => 'cdn/static/json/staticData/scheduleLeagueV2.json',
+		),
+		array(
+			'url'  => 'https://ca.global.nba.com/stats2/team/standing.json?locale=en&teamCode=raptors',
+			'path' => 'global/stats2/team/standing.json',
+		),
+	);
+
+	if ( is_string( $game ) && preg_match( '/^\d{10}$/', $game ) ) {
+		$jobs[] = array(
+			'url'  => 'https://cdn.nba.com/static/json/liveData/boxscore/boxscore_' . $game . '.json',
+			'path' => 'cdn/static/json/liveData/boxscore/boxscore_' . $game . '.json',
+		);
+	} elseif ( null !== $game && '' !== $game ) {
+		fwrite( STDERR, "Invalid --game: expected 10-digit NBA game id.\n" );
+		exit( 1 );
+	}
 }
 
 $ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
@@ -194,20 +217,35 @@ function rrqr_bridge_cli_http_get( $url, $ua ) {
 function rrqr_bridge_cli_http_post( $endpoint, $json, $secret, $ua ) {
 	if ( function_exists( 'curl_init' ) ) {
 		$ch = curl_init( $endpoint );
+		$post_redir = 0;
+		if ( defined( 'CURL_REDIR_POST_301' ) ) {
+			$post_redir |= CURL_REDIR_POST_301;
+		}
+		if ( defined( 'CURL_REDIR_POST_302' ) ) {
+			$post_redir |= CURL_REDIR_POST_302;
+		}
+		if ( defined( 'CURL_REDIR_POST_303' ) ) {
+			$post_redir |= CURL_REDIR_POST_303;
+		}
 		curl_setopt_array(
 			$ch,
 			array(
-				CURLOPT_POST           => true,
-				CURLOPT_POSTFIELDS     => $json,
-				CURLOPT_RETURNTRANSFER => true,
-				CURLOPT_TIMEOUT        => 60,
-				CURLOPT_USERAGENT      => $ua,
-				CURLOPT_HTTPHEADER     => array(
+				CURLOPT_POST             => true,
+				CURLOPT_POSTFIELDS       => $json,
+				CURLOPT_RETURNTRANSFER   => true,
+				CURLOPT_TIMEOUT          => 60,
+				CURLOPT_USERAGENT        => $ua,
+				CURLOPT_FOLLOWLOCATION   => true,
+				CURLOPT_MAXREDIRS        => 5,
+				CURLOPT_HTTPHEADER       => array(
 					'Content-Type: application/json',
 					'Authorization: Bearer ' . $secret,
 				),
 			)
 		);
+		if ( $post_redir > 0 ) {
+			curl_setopt( $ch, CURLOPT_POSTREDIR, $post_redir );
+		}
 		curl_exec( $ch );
 		$code = (int) curl_getinfo( $ch, CURLINFO_HTTP_CODE );
 		curl_close( $ch );

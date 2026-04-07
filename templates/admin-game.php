@@ -14,6 +14,12 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 	<p>
 		<a href="<?php echo esc_url( admin_url( 'admin.php?page=rrqr' ) ); ?>" class="button">&larr; <?php esc_html_e( 'Back to Games', 'rrqr' ); ?></a>
+		<?php if ( class_exists( 'RRQR_Github_Actions' ) && RRQR_Github_Actions::is_configured() ) : ?>
+			<button type="button" class="button" id="rrqr-github-dispatch" data-game-id="<?php echo esc_attr( $game_id ); ?>">
+				<?php esc_html_e( 'Fetch boxscore via GitHub Actions', 'rrqr' ); ?>
+			</button>
+			<span id="rrqr-github-dispatch-status" class="description" style="margin-left:8px;"></span>
+		<?php endif; ?>
 	</p>
 
 	<?php if ( empty( $players ) ) : ?>

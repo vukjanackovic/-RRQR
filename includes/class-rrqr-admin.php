@@ -27,11 +27,14 @@ class RRQR_Admin {
 	 * Constructor.
 	 */
 	public function __construct() {
+		require_once RRQR_PLUGIN_DIR . 'includes/class-rrqr-github-actions.php';
+
 		add_action( 'admin_menu', array( $this, 'add_menu_page' ) );
 		add_action( 'admin_init', array( $this, 'register_settings' ) );
 		add_action( 'admin_init', array( $this, 'handle_settings_save' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_assets' ) );
 		add_action( 'wp_ajax_rrqr_fetch_games', array( $this, 'ajax_fetch_games' ) );
+		add_action( 'wp_ajax_rrqr_github_dispatch', array( $this, 'ajax_github_dispatch' ) );
 		add_action( 'admin_notices', array( $this, 'maybe_show_new_bridge_secret' ) );
 		add_action( 'admin_post_rrqr_bridge_server_sync', array( $this, 'handle_bridge_server_sync' ) );
 	}
@@ -155,6 +158,30 @@ class RRQR_Admin {
 					'thingsWeSaw'   => __( 'Things we saw', 'rrqr' ),
 				),
 			) );
+
+			if ( class_exists( 'RRQR_Github_Actions' ) && RRQR_Github_Actions::is_configured() ) {
+				wp_enqueue_script(
+					'rrqr-github-dispatch',
+					RRQR_PLUGIN_URL . 'assets/js/github-dispatch.js',
+					array(),
+					RRQR_VERSION,
+					true
+				);
+				wp_localize_script(
+					'rrqr-github-dispatch',
+					'rrqrGithubDispatch',
+					array(
+						'ajaxUrl' => admin_url( 'admin-ajax.php' ),
+						'nonce'   => wp_create_nonce( 'rrqr_github_dispatch' ),
+						'i18n'    => array(
+							'working' => __( 'Requesting workflow…', 'rrqr' ),
+							'ok'      => __( 'Done.', 'rrqr' ),
+							'err'     => __( 'Request failed.', 'rrqr' ),
+							'network' => __( 'Network error.', 'rrqr' ),
+						),
+					)
+				);
+			}
 		}
 	}
 
@@ -233,6 +260,45 @@ class RRQR_Admin {
 			'rrqr-settings',
 			'rrqr_bridge_section'
 		);
+
+		add_settings_section(
+			'rrqr_github_section',
+			__( 'GitHub Actions (boxscore)', 'rrqr' ),
+			array( $this, 'render_github_section' ),
+			'rrqr-settings'
+		);
+
+		add_settings_field(
+			'rrqr_github_repo',
+			__( 'Repository', 'rrqr' ),
+			array( $this, 'render_github_repo_field' ),
+			'rrqr-settings',
+			'rrqr_github_section'
+		);
+
+		add_settings_field(
+			'rrqr_github_workflow_note',
+			__( 'Workflow', 'rrqr' ),
+			array( $this, 'render_github_workflow_note_field' ),
+			'rrqr-settings',
+			'rrqr_github_section'
+		);
+
+		add_settings_field(
+			'rrqr_github_ref',
+			__( 'Git ref (branch)', 'rrqr' ),
+			array( $this, 'render_github_ref_field' ),
+			'rrqr-settings',
+			'rrqr_github_section'
+		);
+
+		add_settings_field(
+			'rrqr_github_token',
+			__( 'Personal access token', 'rrqr' ),
+			array( $this, 'render_github_token_field' ),
+			'rrqr-settings',
+			'rrqr_github_section'
+		);
 	}
 
 	/**
@@ -270,6 +336,22 @@ class RRQR_Admin {
 				update_option( RRQR_Bridge::OPTION_SECRET, $generated );
 				set_transient( 'rrqr_bridge_show_secret_once', $generated, 120 );
 			}
+		}
+
+		$repo = isset( $_POST['rrqr_github_repo'] ) ? trim( (string) wp_unslash( $_POST['rrqr_github_repo'] ) ) : '';
+		$repo = trim( $repo, '/' );
+		update_option( RRQR_Github_Actions::OPTION_REPO, sanitize_text_field( $repo ) );
+
+		$ref = isset( $_POST['rrqr_github_ref'] ) ? trim( (string) wp_unslash( $_POST['rrqr_github_ref'] ) ) : '';
+		if ( '' !== $ref && preg_match( '/^[a-zA-Z0-9._/-]+$/', $ref ) ) {
+			update_option( RRQR_Github_Actions::OPTION_REF, $ref );
+		} elseif ( '' === $ref ) {
+			update_option( RRQR_Github_Actions::OPTION_REF, 'main' );
+		}
+
+		$new_pat = isset( $_POST['rrqr_github_token'] ) ? trim( (string) wp_unslash( $_POST['rrqr_github_token'] ) ) : '';
+		if ( '' !== $new_pat ) {
+			update_option( RRQR_Github_Actions::OPTION_TOKEN, $new_pat );
 		}
 
 		wp_safe_redirect( add_query_arg( 'settings-updated', 'true', admin_url( 'admin.php?page=rrqr-settings' ) ) );
@@ -456,6 +538,77 @@ class RRQR_Admin {
 	}
 
 	/**
+	 * GitHub Actions section description.
+	 */
+	public function render_github_section() {
+		echo '<p>' . esc_html__( 'Optional: on Generate Reaction, use the button to run the boxscore-only workflow on GitHub. WordPress always triggers rrqr-bridge-boxscore.yml (never the full schedule job). Nothing runs when you only open a page. For league schedule + standings, run “RRQR NBA bridge sync” from GitHub (cron or Actions UI).', 'rrqr' ) . '</p>';
+	}
+
+	/**
+	 * GitHub owner/repo field.
+	 */
+	public function render_github_repo_field() {
+		$value = get_option( RRQR_Github_Actions::OPTION_REPO, '' );
+		$value = is_string( $value ) ? $value : '';
+		echo '<input type="text" id="rrqr_github_repo" name="rrqr_github_repo" value="' . esc_attr( $value ) . '" class="regular-text" placeholder="owner/repo" />';
+		echo '<p class="description">' . esc_html__( 'Repository that contains .github/workflows (including rrqr-bridge-boxscore.yml). Use owner/repo or paste the full https://github.com/owner/repo URL.', 'rrqr' ) . '</p>';
+	}
+
+	/**
+	 * Fixed workflow file (read-only in UI).
+	 */
+	public function render_github_workflow_note_field() {
+		echo '<p><code>' . esc_html( RRQR_Github_Actions::BOXSCORE_WORKFLOW_FILE ) . '</code></p>';
+		echo '<p class="description">' . esc_html__( 'Quick Reactions always dispatches this workflow. It only fetches and ingests the boxscore for the current game. Full schedule sync is a separate workflow in GitHub.', 'rrqr' ) . '</p>';
+	}
+
+	/**
+	 * Branch / ref field.
+	 */
+	public function render_github_ref_field() {
+		$value = get_option( RRQR_Github_Actions::OPTION_REF, 'main' );
+		$value = is_string( $value ) ? $value : 'main';
+		echo '<input type="text" id="rrqr_github_ref" name="rrqr_github_ref" value="' . esc_attr( $value ) . '" class="regular-text" />';
+	}
+
+	/**
+	 * PAT field (optional update).
+	 */
+	public function render_github_token_field() {
+		echo '<input type="password" name="rrqr_github_token" class="regular-text" autocomplete="new-password" placeholder="' . esc_attr__( 'Leave blank to keep the current token', 'rrqr' ) . '" />';
+		if ( '' !== RRQR_Github_Actions::get_token() ) {
+			echo '<p class="description">' . esc_html__( 'A token is saved. Enter a new value only to replace it.', 'rrqr' ) . '</p>';
+		}
+	}
+
+	/**
+	 * AJAX: dispatch boxscore-only GitHub workflow for this game.
+	 */
+	public function ajax_github_dispatch() {
+		check_ajax_referer( 'rrqr_github_dispatch', 'nonce' );
+
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			wp_send_json_error( __( 'Unauthorized.', 'rrqr' ), 403 );
+		}
+
+		$game_id = isset( $_POST['game_id'] ) ? sanitize_text_field( wp_unslash( $_POST['game_id'] ) ) : '';
+		if ( ! preg_match( '/^\d{10}$/', $game_id ) ) {
+			wp_send_json_error( __( 'Invalid game ID.', 'rrqr' ) );
+		}
+
+		$result = RRQR_Github_Actions::dispatch_bridge_workflow( $game_id );
+		if ( is_wp_error( $result ) ) {
+			wp_send_json_error( $result->get_error_message() );
+		}
+
+		wp_send_json_success(
+			array(
+				'message' => __( 'Boxscore workflow run requested. After GitHub Actions finishes, refresh this page to load the mirrored boxscore from the bridge cache.', 'rrqr' ),
+			)
+		);
+	}
+
+	/**
 	 * One-time display of an auto-generated bridge secret after save.
 	 */
 	public function maybe_show_new_bridge_secret() {
@@ -498,6 +651,10 @@ class RRQR_Admin {
 		if ( ! preg_match( '/^\d{10}$/', $game_id ) ) {
 			echo '<div class="wrap"><div class="notice notice-error"><p>' . esc_html__( 'Invalid game ID format.', 'rrqr' ) . '</p></div></div>';
 			return;
+		}
+
+		if ( RRQR_Bridge::prefers_local_for_rrqr() && RRQR_Bridge::has_boxscore_mirror_file( $game_id ) ) {
+			delete_transient( 'rrqr_boxscore_' . $game_id );
 		}
 
 		$game = $this->fetch_boxscore( $game_id );
