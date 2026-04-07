@@ -1,11 +1,27 @@
-# Requires repo secrets: RRQR_BRIDGE_SITE, RRQR_BRIDGE_SECRET
-# Optional: RRQR_BRIDGE_GAME_ID (10-digit NBA game id)
+# Fetches NBA JSON from GitHub-hosted runners and POSTs into WordPress (RRQR REST ingest).
+# If NBA blocks the runner IP, the job fails — try home cron or another network instead.
+#
+# Required repo secrets:
+#   RRQR_BRIDGE_SITE    — https://yoursite.com (no trailing slash)
+#   RRQR_BRIDGE_SECRET  — same Bearer token as in WP (RRQR settings or RRQR_BRIDGE_SECRET)
+#
+# Optional:
+#   RRQR_BRIDGE_GAME_ID — 10-digit NBA game id to also mirror boxscore when no workflow input is set
+#
+# workflow_dispatch input game_id overrides RRQR_BRIDGE_GAME_ID for that run (e.g. from WP admin button).
 
 name: RRQR NBA bridge sync
 
 on:
   workflow_dispatch:
+    inputs:
+      game_id:
+        description: 'Optional 10-digit NBA game id to mirror boxscore (overrides RRQR_BRIDGE_GAME_ID secret for this run)'
+        required: false
+        default: ''
+        type: string
   schedule:
+    # Every 2 hours at minute 20 (UTC). Adjust as needed.
     - cron: '20 */2 * * *'
 
 jobs:
@@ -17,6 +33,41 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Resolve boxscore game id for fetch script
+        env:
+          INPUT_GAME_ID: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.game_id || '' }}
+          SECRET_GAME_ID: ${{ secrets.RRQR_BRIDGE_GAME_ID }}
+        run: |
+          set -euo pipefail
+          GID="${INPUT_GAME_ID:-}"
+          if [ -z "$GID" ]; then
+            GID="${SECRET_GAME_ID:-}"
+          fi
+          echo "RRQR_BRIDGE_GAME_ID=$GID" >> "$GITHUB_ENV"
+
+      - name: Probe NBA schedule (cdn.nba.com)
+        run: |
+          set -euo pipefail
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+          URL='https://cdn.nba.com/static/json/staticData/scheduleLeagueV2.json'
+          code=$(curl -sSL --compressed -o /tmp/rrqr-schedule-probe.json -w '%{http_code}' \
+            -A "$UA" \
+            -H 'Accept: application/json,text/plain,*/*' \
+            -e 'https://www.nba.com/' \
+            "$URL")
+          bytes=$(wc -c </tmp/rrqr-schedule-probe.json | tr -d ' ')
+          echo "NBA schedule probe: HTTP $code, ${bytes} bytes"
+          head -c 120 /tmp/rrqr-schedule-probe.json; echo
+          if [ "$code" != "200" ]; then
+            echo "::error::NBA schedule returned HTTP $code (runner may be blocked or CDN down)"
+            exit 1
+          fi
+          if [ "$bytes" -lt 1000 ]; then
+            echo "::error::NBA schedule body too small — not usable league JSON"
+            exit 1
+          fi
+          python3 -c "import pathlib; b=pathlib.Path('/tmp/rrqr-schedule-probe.json').read_bytes().lstrip(); assert b[:1]==b'{', 'not JSON object'"
+
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
@@ -27,11 +78,10 @@ jobs:
         env:
           RRQR_BRIDGE_SITE: ${{ secrets.RRQR_BRIDGE_SITE }}
           RRQR_BRIDGE_SECRET: ${{ secrets.RRQR_BRIDGE_SECRET }}
-          RRQR_BRIDGE_GAME_ID: ${{ secrets.RRQR_BRIDGE_GAME_ID }}
         run: |
           set -euo pipefail
           if [ -z "${RRQR_BRIDGE_SITE:-}" ] || [ -z "${RRQR_BRIDGE_SECRET:-}" ]; then
-            echo "Missing secrets: RRQR_BRIDGE_SITE and/or RRQR_BRIDGE_SECRET"
+            echo "Missing GitHub Actions secrets: RRQR_BRIDGE_SITE and/or RRQR_BRIDGE_SECRET"
             exit 1
           fi
           if [ -f wp-content/plugins/rrqr/tools/rrqr-bridge-fetch.php ]; then
@@ -39,7 +89,7 @@ jobs:
           elif [ -f tools/rrqr-bridge-fetch.php ]; then
             SCRIPT="tools/rrqr-bridge-fetch.php"
           else
-            echo "Cannot find rrqr-bridge-fetch.php"
+            echo "Cannot find rrqr-bridge-fetch.php (full site: wp-content/plugins/rrqr/tools/… or plugin-only repo: tools/…)."
             exit 1
           fi
           ARGS=()
