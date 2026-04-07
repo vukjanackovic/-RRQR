@@ -1,0 +1,54 @@
+# Boxscore mirror only — no schedule, standings, or NBA probe. Used by WordPress Quick Reactions.
+# Full schedule + standings: use workflow rrqr-nba-bridge-sync.yml (cron / manual).
+#
+# Secrets: RRQR_BRIDGE_SITE, RRQR_BRIDGE_SECRET (same as other bridge jobs)
+
+name: RRQR bridge boxscore only
+
+on:
+  workflow_dispatch:
+    inputs:
+      game_id:
+        description: '10-digit NBA game id'
+        required: true
+        type: string
+
+jobs:
+  boxscore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: curl
+
+      - name: Ingest boxscore JSON only
+        env:
+          RRQR_BRIDGE_SITE: ${{ secrets.RRQR_BRIDGE_SITE }}
+          RRQR_BRIDGE_SECRET: ${{ secrets.RRQR_BRIDGE_SECRET }}
+          GAME_ID: ${{ github.event.inputs.game_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RRQR_BRIDGE_SITE:-}" ] || [ -z "${RRQR_BRIDGE_SECRET:-}" ]; then
+            echo "Missing GitHub Actions secrets: RRQR_BRIDGE_SITE and/or RRQR_BRIDGE_SECRET"
+            exit 1
+          fi
+          if ! echo "$GAME_ID" | grep -qE '^[0-9]{10}$'; then
+            echo "game_id must be exactly 10 digits, got: $GAME_ID"
+            exit 1
+          fi
+          if [ -f wp-content/plugins/rrqr/tools/rrqr-bridge-fetch.php ]; then
+            SCRIPT="wp-content/plugins/rrqr/tools/rrqr-bridge-fetch.php"
+          elif [ -f tools/rrqr-bridge-fetch.php ]; then
+            SCRIPT="tools/rrqr-bridge-fetch.php"
+          else
+            echo "Cannot find rrqr-bridge-fetch.php"
+            exit 1
+          fi
+          php "$SCRIPT" --game="$GAME_ID" --boxscore-only
