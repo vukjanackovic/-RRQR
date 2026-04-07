@@ -2,13 +2,14 @@
 # If NBA blocks the runner IP, the job fails — try home cron or another network instead.
 #
 # Required repo secrets:
-#   RRQR_BRIDGE_SITE    — https://yoursite.com (no trailing slash)
+#   RRQR_BRIDGE_SITE    — Canonical site URL: https://yoursite.com (no trailing slash). Use the final URL after any http→https or host redirects, or ingest may see HTTP 301 before the fix in rrqr-bridge-fetch.php.
 #   RRQR_BRIDGE_SECRET  — same Bearer token as in WP (RRQR settings or RRQR_BRIDGE_SECRET)
 #
 # Optional:
 #   RRQR_BRIDGE_GAME_ID — 10-digit NBA game id to also mirror boxscore when no workflow input is set
 #
-# workflow_dispatch input game_id overrides RRQR_BRIDGE_GAME_ID for that run (e.g. from WP admin button).
+# workflow_dispatch with non-empty game_id: boxscore-only (skips schedule + standings + probe). WP uses this path.
+# Empty game_id or schedule cron: full sync (probe + schedule + standings + optional secret boxscore).
 
 name: RRQR NBA bridge sync
 
@@ -16,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       game_id:
-        description: 'Optional 10-digit NBA game id to mirror boxscore (overrides RRQR_BRIDGE_GAME_ID secret for this run)'
+        description: 'Game id = boxscore-only. Empty = full schedule + standings sync.'
         required: false
         default: ''
         type: string
@@ -34,9 +35,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Resolve boxscore game id for fetch script
+        id: resolve
         env:
           INPUT_GAME_ID: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.game_id || '' }}
           SECRET_GAME_ID: ${{ secrets.RRQR_BRIDGE_GAME_ID }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
           GID="${INPUT_GAME_ID:-}"
@@ -44,8 +47,16 @@ jobs:
             GID="${SECRET_GAME_ID:-}"
           fi
           echo "RRQR_BRIDGE_GAME_ID=$GID" >> "$GITHUB_ENV"
+          FETCH_MODE=""
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "${INPUT_GAME_ID// /}" ]; then
+            FETCH_MODE="boxscore_only"
+            echo "RRQR_BRIDGE_FETCH_MODE=boxscore_only" >> "$GITHUB_ENV"
+            echo "workflow_dispatch with game_id: boxscore-only mode (schedule + standings skipped)"
+          fi
+          echo "fetch_mode=${FETCH_MODE}" >> "$GITHUB_OUTPUT"
 
       - name: Probe NBA schedule (cdn.nba.com)
+        if: ${{ steps.resolve.outputs.fetch_mode != 'boxscore_only' }}
         run: |
           set -euo pipefail
           UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
@@ -95,5 +106,8 @@ jobs:
           ARGS=()
           if [ -n "${RRQR_BRIDGE_GAME_ID:-}" ]; then
             ARGS+=(--game="$RRQR_BRIDGE_GAME_ID")
+          fi
+          if [ "${RRQR_BRIDGE_FETCH_MODE:-}" = "boxscore_only" ]; then
+            ARGS+=(--boxscore-only)
           fi
           php "$SCRIPT" "${ARGS[@]}"
