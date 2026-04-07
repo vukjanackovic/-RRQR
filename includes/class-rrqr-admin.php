@@ -343,6 +343,16 @@ class RRQR_Admin {
 				continue;
 			}
 
+			if ( ! RRQR_Bridge::body_looks_like_json_object( $body ) ) {
+				$results[] = array(
+					'path'    => $def['path'],
+					'label'   => $def['label'],
+					'ok'      => false,
+					'message' => __( 'Not JSON (often HTML from ca.global.nba.com for legacy standing.json). Theme summary may need another data source.', 'rrqr' ),
+				);
+				continue;
+			}
+
 			$saved = RRQR_Bridge::save_ingest_file( $def['path'], $body );
 			if ( is_wp_error( $saved ) ) {
 				$results[] = array(

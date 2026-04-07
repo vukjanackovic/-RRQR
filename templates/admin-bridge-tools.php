@@ -19,6 +19,7 @@ if ( isset( $_GET['rrqr_synced'] ) && '1' === sanitize_key( wp_unslash( $_GET['r
 	<h1><?php echo esc_html( get_admin_page_title() ); ?></h1>
 
 	<p><?php esc_html_e( 'Populates or inspects the local mirror under uploads/rrqr-bridge. “Try sync from this server” uses the same outbound IP as WordPress—if Cloudways is blocked, that button will fail and you should use the REST ingest or the CLI fetcher from another network.', 'rrqr' ); ?></p>
+	<p class="description"><?php esc_html_e( 'Note: ca.global.nba.com often returns HTML (not JSON) for the legacy standing.json URL. Schedule from cdn.nba.com is reliable; theme standings may need a different data source.', 'rrqr' ); ?></p>
 
 	<h2><?php esc_html_e( 'Cached files', 'rrqr' ); ?></h2>
 	<table class="widefat striped" style="max-width:920px;">

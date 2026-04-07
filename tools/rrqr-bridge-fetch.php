@@ -63,11 +63,18 @@ if ( is_string( $game ) && preg_match( '/^\d{10}$/', $game ) ) {
 
 $ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
+$did_ingest = false;
+
 foreach ( $jobs as $job ) {
 	$body = rrqr_bridge_cli_http_get( $job['url'], $ua );
 	if ( null === $body ) {
 		fwrite( STDERR, "Fetch failed: {$job['url']}\n" );
 		exit( 1 );
+	}
+
+	if ( ! rrqr_bridge_body_looks_like_json_object( $body ) ) {
+		fwrite( STDERR, "Skipping ingest (not JSON, often HTML app shell): {$job['path']} <- {$job['url']}\n" );
+		continue;
 	}
 
 	$payload = wp_json_encode_bridge(
@@ -89,6 +96,24 @@ foreach ( $jobs as $job ) {
 	}
 
 	echo "OK {$job['path']} (" . strlen( $body ) . " bytes)\n";
+	$did_ingest = true;
+}
+
+if ( ! $did_ingest ) {
+	fwrite( STDERR, "Nothing was ingested (all responses skipped or failed).\n" );
+	exit( 1 );
+}
+
+/**
+ * @param string $body Raw HTTP body.
+ * @return bool
+ */
+function rrqr_bridge_body_looks_like_json_object( $body ) {
+	$t = ltrim( (string) $body, " \t\n\r\0\x0B" );
+	if ( strlen( $t ) >= 3 && "\xEF\xBB\xBF" === substr( $t, 0, 3 ) ) {
+		$t = ltrim( substr( $t, 3 ), " \t\n\r\0\x0B" );
+	}
+	return '' !== $t && '{' === $t[0];
 }
 
 /**

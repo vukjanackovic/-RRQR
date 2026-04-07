@@ -161,7 +161,28 @@ class RRQR_Bridge {
 				array( 'status' => 400 )
 			);
 		}
+		if ( ! self::body_looks_like_json_object( $contents ) ) {
+			return new WP_Error(
+				'rrqr_bridge_not_json',
+				__( 'Refusing to save: response is not a JSON object (often HTML from NBA web apps).', 'rrqr' ),
+				array( 'status' => 400 )
+			);
+		}
 		return self::write_cache_file( $path, $contents );
+	}
+
+	/**
+	 * Whether the body looks like a JSON object (not HTML/XML).
+	 *
+	 * @param string $body Raw body.
+	 * @return bool
+	 */
+	public static function body_looks_like_json_object( $body ) {
+		$t = ltrim( (string) $body, " \t\n\r\0\x0B" );
+		if ( strlen( $t ) >= 3 && "\xEF\xBB\xBF" === substr( $t, 0, 3 ) ) {
+			$t = ltrim( substr( $t, 3 ), " \t\n\r\0\x0B" );
+		}
+		return '' !== $t && '{' === $t[0];
 	}
 
 	/**
